@@ -1,8 +1,10 @@
 import argparse
+import asyncio
 import os
 import re
-import requests
+import time
 
+from aiohttp import ClientSession
 from colorama import init, Fore, Back, Style
 
 init(convert=True)
@@ -46,7 +48,7 @@ def parse_project_and_version(strategy, requirement):
     return project_info
 
 
-def get_project_info(project_name, project_version):
+async def get_project_info(project_name, project_version, session):
     """
     Get pypi.org JSON info on project.
 
@@ -55,14 +57,14 @@ def get_project_info(project_name, project_version):
     Output:
         info: dict with info
     """
-    r = requests.get("https://pypi.org/pypi/{}/{}/json".format(project_name, project_version))
-    if r.status_code == 404:
-        print(Fore.RED + "{} could not be found".format(project_name))
+    r = await session.request(method="GET", url="https://pypi.org/pypi/{}/{}/json".format(project_name, project_version))
+    if r.status == 404:
+        print("{} could not be found".format(project_name))
         return
-    return r.json()
+    return await r.json()
 
 
-def check_compatible(project_name, project_version, project_info, check_version):
+def check_compatible(project_name, project_version, project_info, check_version, verbose):
     """
     Check if requirement compatible with specific python version.
 
@@ -79,32 +81,54 @@ def check_compatible(project_name, project_version, project_info, check_version)
         if check_version_prefix in element:
             compatible_versions.add(element.split()[-1])
 
+    result_string = "{}".format(project_name) + (" " * (40 - len(project_name)))
     if check_version in compatible_versions:
-        print(Fore.GREEN + "{} {} is compatible!".format(project_name, project_version))
+        result_string += "| " + Fore.GREEN + "Compatible" + Style.RESET_ALL + "    |"
     else:
-        print(Fore.RED + "{} {} may not be compatible.".format(project_name, project_version))
-        print("\tCompatible versions: {}".format(sorted(compatible_versions)))
+        result_string += "| " + Fore.RED + "Incompatible" + Style.RESET_ALL + "  |"
+
+    result_string += " {}".format(sorted(compatible_versions))
+    print(result_string)
 
 
-def main():
+async def process_requirement(requirement, version, session, verbose):
+    """
+    Take individual requirement in requirements.txt
+    and determine if it is compatible with the specified version.
+
+    Args:
+        requirement: str line from requirements.txt
+        version: str python version specified via cmdline
+    Output:
+        None
+    """
+    strategy = "normal" if "==" in requirement else "wheel"
+    (project_name, project_version) = parse_project_and_version(strategy, requirement)
+    info = await get_project_info(project_name, project_version, session)
+    if info:
+        check_compatible(project_name, project_version, info, version, verbose)
+
+
+async def main():
     parser = argparse.ArgumentParser(description="Check requirements.txt for python version compatability.")
     parser.add_argument("path", default=None, help="path to requirements.txt", type=lambda x: path_is_valid(parser, x))
-    parser.add_argument("-v", "--version", default=None, required=True, help="check if requirements compatible with this python version i.e. X or X.X")
+    parser.add_argument("-p", "--pyversion", default=None, required=True, help="check if requirements compatible with this python version i.e. X or X.X")
+    parser.add_argument("-v", "--verbose", action="store_true", default=False, required=False, help="verbose reporting of version compatability")
 
     args = parser.parse_args()
     requirements_text = args.path.readlines()
-
-    for requirement in requirements_text:
-        strategy = "normal" if "==" in requirement else "wheel"
-        (project_name, project_version) = parse_project_and_version(strategy, requirement)
-        info = get_project_info(project_name, project_version)
-        if info:
-            check_compatible(project_name, project_version, info, args.version)
+    print("\nProject					| Compatibility | Compatible Versions")
+    print("=======================================================================================")
+    async with ClientSession() as session:
+        await asyncio.gather(*(process_requirement(requirement, args.pyversion, session, args.verbose) for requirement in requirements_text))
 
 
     args.path.close()
 
 
 if __name__ == "__main__":
-    main()
+    s = time.perf_counter()
+    asyncio.run(main())
+    print()
+    print(time.perf_counter() - s)
 
