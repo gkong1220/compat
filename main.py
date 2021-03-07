@@ -33,6 +33,7 @@ def parse_project_and_version(strategy, requirement):
     project name and version number specified if specified.
 
     Args:
+        strategy: str "wheel" or "normal" determines parsing scheme
         requirement: str requirement line call out
     Output:
         project_info: str tuple (project_name, version_number)
@@ -54,6 +55,8 @@ async def get_project_info(project_name, project_version, session):
 
     Args:
         project_name: str name of project
+        project_version: str requirements listed version number
+        session: aiohttp ClientSession object
     Output:
         info: dict with info
     """
@@ -64,11 +67,13 @@ async def get_project_info(project_name, project_version, session):
     return await r.json()
 
 
-def check_compatible(project_name, project_version, project_info, check_version, verbose):
+def check_compatible(project_name, project_version, project_info, check_version):
     """
     Check if requirement compatible with specific python version.
 
     Args:
+        project_name: str project of interest
+        project_version: str requirements listed version number
         project_info: json object received from get_project_info
         check_version: str cmd_line input
     Output:
@@ -91,7 +96,7 @@ def check_compatible(project_name, project_version, project_info, check_version,
     print(result_string)
 
 
-async def process_requirement(requirement, version, session, verbose):
+async def process_requirement(requirement, version, session):
     """
     Take individual requirement in requirements.txt
     and determine if it is compatible with the specified version.
@@ -99,6 +104,7 @@ async def process_requirement(requirement, version, session, verbose):
     Args:
         requirement: str line from requirements.txt
         version: str python version specified via cmdline
+        session: aiohttp ClientSession object
     Output:
         None
     """
@@ -106,21 +112,20 @@ async def process_requirement(requirement, version, session, verbose):
     (project_name, project_version) = parse_project_and_version(strategy, requirement)
     info = await get_project_info(project_name, project_version, session)
     if info:
-        check_compatible(project_name, project_version, info, version, verbose)
+        check_compatible(project_name, project_version, info, version)
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Check requirements.txt for python version compatability.")
     parser.add_argument("path", default=None, help="path to requirements.txt", type=lambda x: path_is_valid(parser, x))
     parser.add_argument("-p", "--pyversion", default=None, required=True, help="check if requirements compatible with this python version i.e. X or X.X")
-    parser.add_argument("-v", "--verbose", action="store_true", default=False, required=False, help="verbose reporting of version compatability")
 
     args = parser.parse_args()
     requirements_text = args.path.readlines()
     print("\nProject					| Compatibility | Compatible Versions")
     print("=======================================================================================")
     async with ClientSession() as session:
-        await asyncio.gather(*(process_requirement(requirement, args.pyversion, session, args.verbose) for requirement in requirements_text))
+        await asyncio.gather(*(process_requirement(requirement, args.pyversion, session) for requirement in requirements_text))
 
 
     args.path.close()
